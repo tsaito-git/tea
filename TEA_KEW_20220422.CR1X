@@ -1,0 +1,364 @@
+'For programming tips, copy this address to your browser
+'search window:https://www.campbellsci.com/videos/datalogger-programming
+
+'CR1000X Series Datalogger
+'To create a different opening program template, type in new
+'instructions and select Template | Save as Default Template
+'date:
+'program author:
+
+'SequentialMode
+Const START = CHR(&h7E)
+Const STOP  = CHR(&h7E)
+Const ADR   = CHR(&h00)
+Const MeanIntervalSec = 1800
+Dim con(2)   = {ComC5,ComC7}
+Public Flag(8) As Boolean
+Alias Flag(1) = chkMode
+Const chkFlow = 1.0
+Const chkSec As Long = 3'setting at chkFlow[L/min] for one second every chkSec[sec] seconds 
+Public chkTime As Long = 3600'3600[seconds of a day] means entering a checkmode from 01:00 to 01:00+MeanIntervalSec
+Dim SecOfDay As Long
+Public command(2) As String * 512
+Public response(2) As String * 512
+Public hexres(2) As String * 512
+Public float_result(4) As Float
+Alias  float_result(1) = flow_updraft
+Alias  float_result(2) = flow_downdraft
+Alias  float_result(3) = flowaccum_updraft
+Alias  float_result(4) = flowaccum_downdraft
+Units flow_updraft = slm
+Units flow_downdraft = slm
+Const flowLimit = 19.0
+
+Public rTime(9) As Long
+Dim i
+Public command_len(2) As Long
+Public resLen(2) As Long
+'Public line As String * 128
+
+Public idx As Long
+Public U_RunAvg(4) As Float
+Alias U_RunAvg(1) = Ux_RunAvg
+Alias U_RunAvg(2) = Uy_RunAvg
+Alias U_RunAvg(3) = Uz_RunAvg
+Alias U_RunAvg(4) = Ts_RunAvg
+Units Ux_RunAvg = m s-1
+Units Uy_RunAvg = m s-1
+Units Uz_RunAvg = m s-1
+Units Ts_RunAvg = degC
+Public EC_data(4) As Float
+Alias EC_data(1) = Ux
+Alias EC_data(2) = Uy
+Alias EC_data(3) = Uz
+Alias EC_data(4) = Ts
+Units Ux = m s-1
+Units Uy = m s-1
+Units Uz = m s-1
+Units Ts = degC
+Public EC_mean(15) As Float
+Alias EC_mean(1) = Ux_Avg
+Alias EC_mean(2) = Uy_Avg
+Alias EC_mean(3) = Uz_Avg
+Alias EC_mean(4) = Ts_Avg
+Alias EC_mean(5) = U_Avg
+Alias EC_mean(6) = W_Avg
+Alias EC_mean(7) = WS
+Alias EC_mean(8) = WS_RSLT
+Alias EC_mean(9) = WD_SONIC
+Alias EC_mean(10) = WD_SIGMA
+Alias EC_mean(11) = Wup_LIMIT
+Alias EC_mean(12) = Wdn_LIMIT
+Alias EC_mean(13) = Wabs_Avg
+Public a1 As Double
+Public a2 As Double
+Public u As Double
+Public w As Double
+Units u = m s-1
+Units w = m s-1
+Const NUMMAX = MeanIntervalSec*10/10/2 'cutting 1%(up:0.5%,down:0.5%,180count/30min)
+Dim wmax(NUMMAX),wmin(NUMMAX)
+Public wmax_limit(2)
+Public wmin_limit(2)
+Public w_abs,w_sgn
+Public wmax_limit_disable As Boolean
+Public wmin_limit_disable As Boolean
+Public k_wind2volume(2)
+Alias  k_wind2volume(1) = k_w2v_updraft
+Alias  k_wind2volume(2) = k_w2v_downdraft
+Public setting_point(2)
+Alias  setting_point(1) = setting_point_updraft
+Alias  setting_point(2) = setting_point_downdraft
+Units setting_point_updraft = slm
+Units setting_point_downdraft = slm
+
+DataTable (ECdata,True,-1 )
+  TableFile ("CRD:ECdata_",64,-1,0,1,Day,0,0)
+  Sample(4,Ux,IEEE4)
+  Sample(1,u,IEEE4)
+  Sample(1,w,IEEE4)
+  Sample(2,k_wind2volume(),IEEE4)
+  Sample(2,float_result(),IEEE4)
+  Sample(2,setting_point(),IEEE4)
+EndTable
+DataTable (ECmean,True,-1 )
+  DataInterval (0,MeanIntervalSec,Sec,0)
+  TableFile ("CRD:ECmean_",64,-1,0,30,Day,0,0)
+  Average(4,Ux,IEEE4,False)
+  Average(1,u,IEEE4,False)
+  Average(1,w,IEEE4,False)
+  WindVector (1,Uy,Ux,IEEE4,False,0,1,2)
+  Sample(1,wmax_limit(1),IEEE4)
+  Sample(1,wmin_limit(1),IEEE4)
+  Average(1,w_abs,IEEE4,False)
+  Sample(2,flowaccum_updraft,IEEE4,False)
+EndTable
+Function byte_stuffing(hex_data As String * 256) As String * 256
+  Dim LENGTH As Long
+	Dim ret As String * 256
+	ret  = ""
+	LENGTH = Len(hex_data) INTDV 2
+	For i = 1 To LENGTH
+		Select Case Mid(hex_data,i*2-1,2)
+		Case "7E"
+			ret &= "7D5E"
+		Case "7D"
+			ret &= "7D5D"
+		Case "11"
+			ret &= "7D31"
+		Case "13"
+			ret &= "7D33"
+		Case Else
+			ret &= Mid(hex_data,i*2-1,2)
+		EndSelect
+	Next
+	Return (ret)
+EndFunction
+Function FloatToHex(float_val As Float) As String * 8
+	Dim int_val As Long
+	int_val = 0
+	MoveBytes (int_val,0,float_val,0,4)
+	Return (FormatLong (int_val,"%08X"))
+EndFunction
+Function get_checksum(hex_address As String * 4,hex_command As String * 4,hex_data As String * 512) As Long
+  Dim LENGTH As Long
+  Dim sum As Long
+	LENGTH = (Len(hex_address) INTDV 2) + 1 + (Len(hex_data) INTDV 2)
+	hex_data = hex_command & FormatLong(Len(hex_data) INTDV 2,"%02X") & hex_data
+	sum = HexToDec(hex_address)
+	For i = 1 To LENGTH
+		sum += HexToDec(Mid(hex_data,i*2-1,2))
+	Next
+	sum = sum MOD 256
+	Return (sum XOR &h000000FF)
+EndFunction
+Function make_command(hex_address As String * 4,hex_command As String * 4,hex_data As String * 512,idx As Long) As Long
+  Dim LENGTH As Long
+  Dim CHK As Long
+	CHK = get_checksum(hex_address,hex_command,hex_data)
+	hex_data = hex_address & hex_command & FormatLong(Len(hex_data) INTDV 2,"%02X") & hex_data
+	hex_data = byte_stuffing(hex_data)
+	LENGTH = (Len(hex_data) INTDV 2)
+	command(idx,1,1) = START
+	For i = 1 To LENGTH
+		command(idx,1,1+i) = CHR(HexToDec(Mid(hex_data,i*2-1,2)))
+	Next
+	command(idx,1,2+LENGTH) = CHR(CHK)
+	command(idx,1,3+LENGTH) = STOP
+	Return (3+LENGTH)
+EndFunction
+Sub get_info(idx As Long)
+	command_len(idx) = make_command("00","D0","01",idx)
+	SerialOutBlock (con(idx),command(idx),command_len(idx))
+	Delay (0,5,mSec)
+	SerialInBlock(con(idx),response(idx),256)
+	resLen(idx) = ASCII(response(idx,1,5))
+	If resLen(idx) > 0
+		MoveBytes (hexres(idx),0,response(idx),5,resLen(idx))
+	EndIf
+EndSub
+Sub set_setpoint(idx As Long,point As Float)
+	command_len(idx) = make_command("00","00","00"&FloatToHex(point),idx)
+	SerialOutBlock (con(idx),command(idx),command_len(idx))
+	Delay (0,5,mSec)
+	SerialInBlock(con(idx),response(idx),32)
+EndSub
+Function get_float(idx As Long,add As String * 4,com As String * 4,opt As String * 8,Optional debug As Long = 0) As Float
+	Dim ret As Float
+	Dim started As Boolean
+	Dim esc As Boolean
+	Dim bytelen As Long
+	Dim byte As Long
+	Dim bytes As String * 8
+	Dim ptr As Long
+  
+  command(idx) = ""
+  response(idx) = ""
+  SerialFlush(con(idx))
+	command_len(idx) = make_command(add,com,opt,idx)
+	SerialOutBlock (con(idx),command(idx),command_len(idx))
+	Delay (0,5,mSec)
+	SerialInBlock(con(idx),response(idx),32)
+	If debug > 0 Then hexres(debug) = ""
+	started = False
+	bytes = ""
+	For i = 1 To 16 
+	  byte = ASCII(response(idx,1,i))
+		If debug > 0 Then hexres(debug) &= FormatLong (byte,"%02X ")
+ 		If byte = &h00007E Then
+ 		  If started Then
+ 		    ExitFor
+ 		  Else
+ 		    started = True
+ 		  EndIf
+  	EndIf
+	Next
+	bytelen = i - 2 - 5
+	esc = False
+	ptr = 1
+	If bytelen >= 4 AND bytelen <=8 AND ASCII(response(idx,1,5)) = 4 Then
+  	For i = 1 To bytelen
+  	  byte = ASCII(response(idx,1,5+i))
+   		If byte = &h00007D Then
+   		  esc = True
+  	  ElseIf esc Then
+  	    byte =  byte XOR &b00100000
+  	    bytes(1,1,ptr) = CHR(byte)
+  	    ptr += 1
+  	    esc = False
+  	  Else
+  	    bytes(1,1,ptr) = CHR(byte)
+  	    ptr += 1
+    	EndIf
+  	Next
+  	MoveBytes(ret,0,bytes,0,4)
+	EndIf
+	Return (ret)
+EndFunction
+Function get_setpoint(idx As Long,Optional debug As Long = 0) As Float
+	Return (get_float(idx,"00","00","00",debug))
+EndFunction
+Function get_flow(idx As Long,Optional debug As Long = 0) As Float
+	Return (get_float(idx,"00","08","00",debug))
+EndFunction
+Function set_setpoint_readflow(idx As Long,point As Float,Optional debug As Long = 0) As Float
+	Return (get_float(idx,"00","03","00"&FloatToHex(point),debug))
+EndFunction
+Sub set_valve_input(idx As Long,flow As String * 4)
+	command_len(idx) = make_command("00","20","00"&flow,idx)
+	SerialOutBlock (con(idx),command(idx),command_len(idx))
+	Delay(2,5,mSec)
+	SerialInBlock(con(idx),response(idx),32)
+EndSub
+BeginProg
+	SerialOpen(ComC5,115200,19,1,512,4) 'for updraft
+	SerialOpen(ComC7,115200,19,1,512,4) 'for downdraft
+  set_valve_input(1,"00")'"00":controller, "01":fully closed, "02":fully open
+  set_valve_input(2,"00")'"00":controller, "01":fully closed, "02":fully open
+  GetRecord(Ux_Avg,ECmean,1)
+  For i = 1 To NUMMAX
+    wmax(i) = -1
+    wmin(i) = -1
+  Next
+  wmax_limit_disable = true
+  wmin_limit_disable = true
+  flowaccum_updraft = 0.0
+  flowaccum_downdraft = 0.0
+	Randomize(0)
+  Scan (100,mSec,3,0)
+		RealTime( rTime )
+		idx = (Public.Timestamp(1,1) MOD 1800) * 10
+		idx += (rTime(7) INTDV 100000)
+    VoltSe(Ux,1,mV5000,1,True,0,0,0.04,-20)
+    VoltSe(Uy,1,mV5000,2,True,0,0,0.04,-20)
+    VoltSe(Uz,1,mV5000,3,True,0,0,0.01,-5)
+    VoltSe(Ts,1,mV5000,4,True,0,0,0.1,-50)
+'		VoltDiff(Ux,4,mV5000,1,True,0,15000,1.0,0.0)
+'    Ux = -Ux 'SAT550 East direction (Ux) = -X (HigashiKaze = +X)
+'    Uy = -Uy 'SAT550 North direction (Uy) = -Y (KitaKaze = +Y)
+		If ECmean.Output(1,1) Then
+		  GetRecord(Ux_Avg,ECmean,1)
+      For i = 1 To NUMMAX
+        wmax(i) = -1
+        wmin(i) = -1
+      Next
+      wmax_limit_disable = true
+      wmin_limit_disable = true
+      flowaccum_updraft = 0.0
+      flowaccum_downdraft = 0.0
+    EndIf
+    AvgRun(U_RunAvg(),3,Ux,MeanIntervalSec*10)
+    a1 = SQR(Ux_RunAvg*Ux_RunAvg+Uy_RunAvg*Uy_RunAvg)
+    a2 = SQR(Ux_RunAvg*Ux_RunAvg+Uy_RunAvg*Uy_RunAvg+Uz_RunAvg*Uz_RunAvg)
+    u = (Ux*Ux_RunAvg + Uy*Uy_RunAvg + Uz*Uz_RunAvg)/a2
+    w = (Uz*a1-(Ux*Ux_RunAvg+Uy*Uy_RunAvg)*Uz_RunAvg/a1)/a2
+'    cos_a = Ux_Avg/a1
+'    sin_a = Uy_Avg/a1
+'    cos_b = a1/a2
+'    sin_b = Uz_Avg*/a2
+'    u = Ux*cos_b*cos_a+Uz*cos_b*sin_a+Uz*sin_b
+'    w = Uz*cos_b-Ux*sin_b*cos_a-Uz*sin_b*sin_a
+    If w = NAN Then
+      w_abs = ABS(Uz)
+      w_sgn = SGN(Uz)
+    Else
+      w_abs = ABS(w)
+      w_sgn = SGN(w)
+    EndIf
+    If w_sgn < 0 Then
+      MinSpa(wmin_limit,NUMMAX,wmin)
+      If -w > wmin_limit(1) Then
+        wmin(wmin_limit(2)) = -w
+      EndIf
+    Else
+      MinSpa(wmax_limit,NUMMAX,wmax)
+      If w > wmax_limit(1) Then
+        wmax(wmax_limit(2)) = w
+      EndIf
+    EndIf
+    If wmax_limit(1) > 0.0 Then
+      wmax_limit_disable = false
+    EndIf
+    If wmax_limit(1) < 0.0 Then
+      wmin_limit_disable = false
+    EndIf
+    If Wup_LIMIT > 0 Then
+      k_wind2volume(1) = 1.0/Wup_LIMIT
+      setting_point(1) = k_wind2volume(1) * IIF(w_sgn < 0,    0,w_abs)
+    Else
+      k_wind2volume(1) = 0.0
+      setting_point(1) = 0.2
+    EndIf
+    If Wdn_LIMIT > 0 Then
+      k_wind2volume(2) = 1.0/Wdn_LIMIT
+      setting_point(2) = k_wind2volume(2) * IIF(w_sgn < 0,w_abs,    0)
+    Else
+      k_wind2volume(2) = 0.0
+      setting_point(2) = 0.2
+    EndIf
+    If flowaccum_updraft > flowLimit Then setting_point(1) = 0.0
+    If flowaccum_downdraft > flowLimit Then setting_point(2) = 0.0
+    SecOfDay = rTime(4)*3600 + rTime(5)*60 + rTime(6)
+    If chkTime >= 0 AND chkTime <= SecOfDay  AND SecOfDay < (chkTime + MeanIntervalSec*2) Then
+      chkMode = True
+    Else
+      chkMode = False
+    EndIf
+    If chkMode Then
+      If (rTime(6) MOD chkSec) = 0 Then
+        float_result(1) = set_setpoint_readflow(1,chkFlow) 'for upstream
+    		float_result(2) = set_setpoint_readflow(2,chkFlow) 'for downstream
+    	Else
+        float_result(1) = set_setpoint_readflow(1,0) 'for upstream
+    		float_result(2) = set_setpoint_readflow(2,0) 'for downstream
+    	EndIf
+    Else
+  		float_result(1) = set_setpoint_readflow(1,IIF(setting_point(1) > 1.0, 1.0, setting_point(1))) 'for updraft
+  		float_result(2) = set_setpoint_readflow(2,IIF(setting_point(2) > 1.0, 1.0, setting_point(2))) 'for downdraft
+  	EndIf
+  	flowaccum_updraft = flowaccum_updraft + float_result(1)/600
+  	flowaccum_downdraft = flowaccum_downdraft + float_result(2)/600
+		CallTable ECdata
+		CallTable ECmean
+	NextScan
+EndProg

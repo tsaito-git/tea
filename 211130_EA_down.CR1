@@ -1,0 +1,140 @@
+'CR1000X Series Datalogger
+'date: 2020/8/4
+'program author: Sakabe
+
+Public rtime(9)
+'Public CO2, H2O
+Const CO2_Span  = 30/1000            ' (ppm / mV) LI-850 5V = 2000ppm
+Const H2O_Span  = 4/1000          ' (ppt / mV) LI-850 5V = 80ppt
+Const CO2_Offset  = 450            ' (ppm / mV) LI-850 5V = 2000ppm
+Const H2O_Offset  = 20          ' (ppt / mV) LI-850 5V = 80ppt
+Public CO2digi
+Public H2Odigi
+Public CO2digi2
+Public H2Odigi2
+Public celltemp,cellpres,flowrate
+Public celltemp2,cellpres2
+Public CDCtrl(16)
+Public SerialBuf As String * 800
+Public SerialBuf2 As String * 800
+Public Results(16)
+Public Nbytes
+
+Dim StarttagPos,StartPos,EndPos
+Function TaggedValue(buffer As String * 1000,tag As String * 16,starttag As String * 16) As String * 32
+  If Len(starttag) = 0 Then
+	  StarttagPos = 1
+	Else
+	  StarttagPos = InStr(1,buffer,"<" & starttag & ">",4)
+	EndIf
+	StartPos = InStr(StarttagPos,buffer,"<" & tag & ">",4)
+  EndPos   = InStr(StarttagPos,buffer,"</" & tag & ">",2)
+	Return(Mid(buffer,StartPos,EndPos - StartPos))
+EndFunction
+
+   DataTable (EA_down,1,-1)
+	 DataInterval (0,1,sec,0)
+'	 CardOut (0 ,-1)
+	 TableFile ("CRD:EA_down",64,-1,0,1,Day,0,0)
+	 Sample (1,CO2digi,IEEE4)
+	 Sample (1,H2Odigi,IEEE4)
+	 Sample (1,CO2digi2,IEEE4)
+	 Sample (1,H2Odigi2,IEEE4)
+	 Sample (1,celltemp,IEEE4)
+	 Sample (1,cellpres,IEEE4)
+	 Sample (1,flowrate,IEEE4)
+	 Sample (1,celltemp2,IEEE4)
+	 Sample (1,cellpres2,IEEE4)
+   EndTable
+   
+BeginProg
+	SerialOpen(Com3,9600,0,0,800)
+  SerialOut(Com3,"<li850><tech><pump><flow>0.5</flow></pump></tech></li850>"&CHR(10),"</li850>",0,300)
+	SerialFlush(Com3)
+	SerialOpen(Com4,9600,0,0,800)
+	SerialFlush(Com4)
+
+Scan (1,sec,3200,0)
+  RealTime (rtime())
+  If IfTime(0, 3600, sec) Then
+      CDCtrl(1) = 1 ' sample up_00
+      CDCtrl(2) = 1 ' sample down_00
+      CDCtrl(3) = 0
+			CDCtrl(4) = 1 ' analyze up_30
+			CDCtrl(5) = 0
+			CDCtrl(6) = 0
+			CDCtrl(7) = 1 ' bag -> LI-850
+			CDCtrl(8) = 0
+   EndIf
+   If IfTime(600, 3600, sec) Then      
+      CDCtrl(1) = 1
+      CDCtrl(2) = 1
+      CDCtrl(3) = 0
+			CDCtrl(4) = 0
+			CDCtrl(5) = 0
+			CDCtrl(6) = 1 ' analyze down_30
+			CDCtrl(7) = 1 ' bag -> LI-850
+			CDCtrl(8) = 0
+   EndIf
+      If IfTime(1200, 3600, sec) Then  
+      CDCtrl(1) = 1
+      CDCtrl(2) = 1
+      CDCtrl(3) = 0
+			CDCtrl(4) = 1 ' exhaust up_30
+			CDCtrl(5) = 0
+			CDCtrl(6) = 1 ' exhaust down_30
+			CDCtrl(7) = 0
+			CDCtrl(8) = 1 ' up_30 & down_30 -> pump
+   EndIf
+   If IfTime(1800, 3600, sec) Then     
+      CDCtrl(1) = 0
+      CDCtrl(2) = 0
+      CDCtrl(3) = 1 ' analyze up_00
+			CDCtrl(4) = 0
+			CDCtrl(5) = 0
+			CDCtrl(6) = 0
+			CDCtrl(7) = 1 ' bag -> LI-850
+			CDCtrl(8) = 0
+   EndIf
+      If IfTime(2400, 3600, sec) Then 
+      CDCtrl(1) = 0
+      CDCtrl(2) = 0
+      CDCtrl(3) = 0
+			CDCtrl(4) = 0
+			CDCtrl(5) = 1 ' analyze down_00
+			CDCtrl(6) = 0
+			CDCtrl(7) = 1 ' bag -> LI-850
+			CDCtrl(8) = 0
+   EndIf
+      If IfTime(3000, 3600, sec) Then
+      CDCtrl(1) = 0
+      CDCtrl(2) = 0
+      CDCtrl(3) = 1 ' exhaust up_00
+			CDCtrl(4) = 0
+			CDCtrl(5) = 1 ' exhaust down_00
+			CDCtrl(6) = 0
+			CDCtrl(7) = 0
+			CDCtrl(8) = 1 ' bag -> pump
+   EndIf
+
+SDMCD16AC (CDCtrl(),1,0)
+	
+'   VoltDiff (CO2,1,mV5000,1,0,0,_60Hz,CO2_Span,CO2_Offset)
+'	 VoltDiff (H2O,1,mV5000,2,0,0,_60Hz,H2O_Span,H2O_Offset)
+	 SerialInRecord(Com3,SerialBuf,10,0,10,Nbytes,100)
+	 SerialInRecord(Com4,SerialBuf2,10,0,10,Nbytes,100)
+	 SplitStr (Results(),SerialBuf2," ",16,0)
+	 CO2digi2 = Results(3)
+	 H2Odigi2 = Results(6)
+	 celltemp2 = Results(9)
+	 cellpres2 = Results(8)
+	 CO2digi = TaggedValue(SerialBuf,"co2","")
+	 H2Odigi = TaggedValue(SerialBuf,"h2o","")
+	 celltemp = TaggedValue(SerialBuf,"celltemp","")
+	 cellpres = TaggedValue(SerialBuf,"cellpres","")
+	 flowrate = TaggedValue(SerialBuf,"flowrate","")
+	 CallTable EA_down
+	
+NextScan 
+EndProg
+
