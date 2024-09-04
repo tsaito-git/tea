@@ -1,1 +1,5 @@
-This repository contains Python code for measuring turbulent gas fluxes using the true eddy accumulation (TEA) technique. The code accompanies the submitted paper "[Your Paper Title Here]" and provides tools for data processing, flux calculation, and visualization.
+##Measuring Turbulent Gas Flux using True Eddy Accumulation (TEA)
+
+
+This repository contains code for measuring turbulent gas fluxes using the true eddy accumulation (TEA) technique. 
+The code accompanies a submitted paper and provides tools for data processing and flux calculation.
