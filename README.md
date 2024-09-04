@@ -1,4 +1,4 @@
-##Measuring Turbulent Gas Flux using True Eddy Accumulation (TEA)
+#　Measuring Turbulent Gas Flux using True Eddy Accumulation (TEA)
 
 
 This repository contains code for measuring turbulent gas fluxes using the true eddy accumulation (TEA) technique. 
