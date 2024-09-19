@@ -1,11 +1,10 @@
-# Tools for Measuring Turbulent Gas Flux using True Eddy Accumulation (TEA)
+# TEA-scripts
 
-This repository contains code for measuring turbulent gas fluxes using the true eddy accumulation (TEA) technique. 
-The code accompanies a submitted paper and provides tools for data processing and flux calculation.
+This repository contains code for controlling a true eddy accumulation (TEA) system and analyzing its data output for flux calculations. The code is associated with a submitted research paper.
 
 ## Code Structure
 
-- `TEA_KEW_20220422.CR1X`: The main script to control the mass flow controllers. This script is for the Campbell Scientific CR1000X Datalogger.
-- `211130_EA_down.CR1`: Containes functions for processing accumulated sample.
-- 'tea_mean4.py': Containes tools for calculating fluxes.
-- 'tob.py': Provides functions for reading TOB files.
+- `TEA_KEW_20220422.CR1X`: CRBasic script for instrument operation, designed to segregate air samples. This script is intended for use with the Campbell Scientific CR1000X datalogger.
+- `211130_EA_down.CR1`: CRBasic script for processing accumulated samples.
+- 'tea_mean4.py': Python script for flux calculation.
+- 'tob.py': Python script for reading TOB files.
